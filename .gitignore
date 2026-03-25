@@ -1,0 +1,26 @@
+# Build directories
+build/
+build-rpi/
+build-win/
+
+# Compiled artifacts
+*.a
+*.so
+*.so.*
+*.dll
+*.exe
+*.o
+
+# Reference source tree (not part of the library)
+source/
+
+decoder-change.md
+interfacing.md
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
