@@ -1,0 +1,136 @@
+/*
+ * varicode.c — PSK31 Varicode encode/decode.
+ *
+ * The Varicode table is from the G3PLX (Peter Martinez) PSK31 specification,
+ * published 1998 in RSGB RadCom.  The table is considered public domain data.
+ *
+ * Representation: each entry is the minimal unsigned integer whose binary
+ * representation IS the varicode codeword (MSB transmitted first).  The
+ * implicit leading 1 determines the length: len = floor(log2(val)) + 1.
+ *
+ * Example: space (ASCII 32) = 0x0001 = binary "1" (1 bit).
+ *          'e'   (ASCII 101) = 0x0003 = binary "11" (2 bits).
+ *          '-'   (ASCII 45)  = 0x0035 = binary "110101" (6 bits).
+ *
+ * MIT License. Copyright (c) 2025.
+ */
+
+#include "psk.h"
+
+/* The 128-entry Varicode table (G3PLX, public domain). */
+static const uint16_t varicode_tbl[128] = {
+    /* 0x00 NUL */ 0x02AB, /* 1x01 SOH */ 0x02DB,
+    /* 0x02 STX */ 0x02ED, /* 0x03 ETX */ 0x0377,
+    /* 0x04 EOT */ 0x02EB, /* 0x05 ENQ */ 0x035F,
+    /* 0x06 ACK */ 0x02EF, /* 0x07 BEL */ 0x02FD,
+    /* 0x08  BS */ 0x02FF, /* 0x09  HT */ 0x00EF,
+    /* 0x0A  LF */ 0x001D, /* 0x0B  VT */ 0x036F,
+    /* 0x0C  FF */ 0x02DD, /* 0x0D  CR */ 0x001F,
+    /* 0x0E  SO */ 0x0375, /* 0x0F  SI */ 0x03AB,
+    /* 0x10 DLE */ 0x02F7, /* 0x11 DC1 */ 0x02F5,
+    /* 0x12 DC2 */ 0x03AD, /* 0x13 DC3 */ 0x03AF,
+    /* 0x14 DC4 */ 0x035B, /* 0x15 NAK */ 0x036B,
+    /* 0x16 SYN */ 0x036D, /* 0x17 ETB */ 0x0357,
+    /* 0x18 CAN */ 0x037B, /* 0x19  EM */ 0x037D,
+    /* 0x1A SUB */ 0x03B7, /* 0x1B ESC */ 0x0355,
+    /* 0x1C  FS */ 0x035D, /* 0x1D  GS */ 0x03BB,
+    /* 0x1E  RS */ 0x02FB, /* 0x1F  US */ 0x037F,
+    /* 0x20  SP */ 0x0001, /* 0x21   ! */ 0x01FF,
+    /* 0x22   " */ 0x015F, /* 0x23   # */ 0x01F5,
+    /* 0x24   $ */ 0x01DB, /* 0x25   % */ 0x02D5,
+    /* 0x26   & */ 0x02BB, /* 0x27   ' */ 0x017F,
+    /* 0x28   ( */ 0x00FB, /* 0x29   ) */ 0x00F7,
+    /* 0x2A   * */ 0x016F, /* 0x2B   + */ 0x01DF,
+    /* 0x2C   , */ 0x0075, /* 0x2D   - */ 0x0035,
+    /* 0x2E   . */ 0x0057, /* 0x2F   / */ 0x01AF,
+    /* 0x30   0 */ 0x00B7, /* 0x31   1 */ 0x00BD,
+    /* 0x32   2 */ 0x00ED, /* 0x33   3 */ 0x00FF,
+    /* 0x34   4 */ 0x0177, /* 0x35   5 */ 0x015B,
+    /* 0x36   6 */ 0x016B, /* 0x37   7 */ 0x01AD,
+    /* 0x38   8 */ 0x01AB, /* 0x39   9 */ 0x01B7,
+    /* 0x3A   : */ 0x00F5, /* 0x3B   ; */ 0x01BD,
+    /* 0x3C   < */ 0x01ED, /* 0x3D   = */ 0x0055,
+    /* 0x3E   > */ 0x01D7, /* 0x3F   ? */ 0x02AF,
+    /* 0x40   @ */ 0x02BD, /* 0x41   A */ 0x007D,
+    /* 0x42   B */ 0x00EB, /* 0x43   C */ 0x00AD,
+    /* 0x44   D */ 0x00B5, /* 0x45   E */ 0x0077,
+    /* 0x46   F */ 0x00DB, /* 0x47   G */ 0x00FD,
+    /* 0x48   H */ 0x0155, /* 0x49   I */ 0x007F,
+    /* 0x4A   J */ 0x01FD, /* 0x4B   K */ 0x017D,
+    /* 0x4C   L */ 0x00D7, /* 0x4D   M */ 0x00BB,
+    /* 0x4E   N */ 0x00DD, /* 0x4F   O */ 0x00AB,
+    /* 0x50   P */ 0x00D5, /* 0x51   Q */ 0x01DD,
+    /* 0x52   R */ 0x00AF, /* 0x53   S */ 0x006F,
+    /* 0x54   T */ 0x006D, /* 0x55   U */ 0x0157,
+    /* 0x56   V */ 0x01B5, /* 0x57   W */ 0x015D,
+    /* 0x58   X */ 0x0175, /* 0x59   Y */ 0x017B,
+    /* 0x5A   Z */ 0x02AD, /* 0x5B   [ */ 0x01F7,
+    /* 0x5C   \ */ 0x01EF, /* 0x5D   ] */ 0x01FB,
+    /* 0x5E   ^ */ 0x02BF, /* 0x5F   _ */ 0x016D,
+    /* 0x60   ` */ 0x02DF, /* 0x61   a */ 0x000B,
+    /* 0x62   b */ 0x005F, /* 0x63   c */ 0x002F,
+    /* 0x64   d */ 0x002D, /* 0x65   e */ 0x0003,
+    /* 0x66   f */ 0x003D, /* 0x67   g */ 0x005B,
+    /* 0x68   h */ 0x002B, /* 0x69   i */ 0x000D,
+    /* 0x6A   j */ 0x01EB, /* 0x6B   k */ 0x00BF,
+    /* 0x6C   l */ 0x001B, /* 0x6D   m */ 0x003B,
+    /* 0x6E   n */ 0x000F, /* 0x6F   o */ 0x0007,
+    /* 0x70   p */ 0x003F, /* 0x71   q */ 0x01BF,
+    /* 0x72   r */ 0x0015, /* 0x73   s */ 0x0017,
+    /* 0x74   t */ 0x0005, /* 0x75   u */ 0x0037,
+    /* 0x76   v */ 0x007B, /* 0x77   w */ 0x006B,
+    /* 0x78   x */ 0x00DF, /* 0x79   y */ 0x005D,
+    /* 0x7A   z */ 0x01D5, /* 0x7B   { */ 0x02B7,
+    /* 0x7C   | */ 0x01BB, /* 0x7D   } */ 0x02B5,
+    /* 0x7E   ~ */ 0x02D7, /* 0x7F DEL */ 0x03B5
+};
+
+/* Return the number of significant bits in v (floor(log2(v))+1), v > 0. */
+static int msb_pos(uint16_t v)
+{
+    int n = 0;
+    while (v > 1) { v >>= 1; n++; }
+    return n; /* bit position of MSB, 0-based; length = n+1 */
+}
+
+int psk_varicode_encode(char c, uint8_t *bits_out)
+{
+    int idx = (unsigned char)c;
+    uint16_t code;
+    int len, i;
+
+    if (idx < 0 || idx >= 128 || bits_out == NULL)
+        return 0;
+
+    code = varicode_tbl[idx];
+    len  = msb_pos(code) + 1;   /* number of code bits */
+
+    /* Emit bits MSB-first */
+    for (i = len - 1; i >= 0; i--)
+        bits_out[len - 1 - i] = (code >> i) & 1;
+
+    /* Append 2-bit inter-character separator (00) */
+    bits_out[len]     = 0;
+    bits_out[len + 1] = 0;
+
+    return len + 2;
+}
+
+char psk_varicode_decode(const uint8_t *bits, size_t len)
+{
+    uint16_t val = 0;
+    size_t i;
+    int c;
+
+    if (bits == NULL || len == 0 || len > 14)
+        return 0;
+
+    for (i = 0; i < len; i++)
+        val = (uint16_t)((val << 1) | (bits[i] & 1));
+
+    for (c = 0; c < 128; c++)
+        if (varicode_tbl[c] == val)
+            return (char)c;
+
+    return 0;
+}
